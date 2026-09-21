@@ -181,7 +181,7 @@ ROLE_TOOLS: dict[str, list[str]] = {
 # generic video enqueuer, which omits board/camera lineage and take selection.
 ROLE_TOOLS["production"] = [
     "get_workspace", "get_story", "list_scenes", "list_clips", "list_workflows",
-    "get_production_workflow", "get_production_job", "get_production", "inspect_production_image",
+    "get_production_workflow", "get_production_job", "get_production", "get_production_boards", "inspect_production_image",
     "generate_storyboard", "save_storyboard_candidate", "select_storyboard_take",
     "set_production_world", "set_production_camera", "render_production_previs",
     "generate_production_video", "select_production_video", "comfy_server_info",
@@ -619,7 +619,9 @@ async def _run_sub_agent(
             " For shared-world production, use the dedicated generate_storyboard, "
             "render_production_previs and generate_production_video tools so source lineage "
             "is recorded. Read get_production_workflow for exact bindings and get_production_job "
-            "for compact job lineage/output indices. Save and inspect "
+            "for compact job lineage/output indices. Use get_production_boards for paginated "
+            "board paths, selections and current revision without the large world payload. "
+            "Save and inspect "
             "image candidates before selecting them; do not invent visual observations."
         )
     if hardening:

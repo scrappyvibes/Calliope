@@ -57,7 +57,7 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. The dev server proxies `/api` to the backend on `127.0.0.1:8247`.
 
-### ScrappyVibes subscription connection (in progress)
+### ScrappyVibes subscription connection
 
 In **Settings → LLMs → Story and planning provider**, select **Claude subscription**
 or **Codex subscription** and save. Install the selected CLI on PATH and run
@@ -72,8 +72,9 @@ customizations. Codex runs in a temporary read-only directory with shell and
 multi-agent tools disabled and user configuration excluded. Replies appear once
 each completion finishes. Both transports pass attached images to the model,
 preserving their order in conversation history; remote image URLs are rejected.
-The production state, Blender stages and workflow B integration remain in progress.
-See [the implementation checkpoint](SCRAPPYVIBES-PIPELINE.md).
+Shared production state, Blender blocking and workflow A/B generation are available
+in the Previs stage. See [the implementation checkpoint](SCRAPPYVIBES-PIPELINE.md)
+for live test evidence and visual limitations.
 
 ## First run
 
@@ -85,12 +86,14 @@ Review the prepared inputs and save it to the library. This creates a separate
 graph with a refined-board input, scene and second-pass prompts, style prepend
 and append, and a correctly bound seed. It preserves the render settings and
 removes the embedded Claude API calls and unused preview branches. Supply both
-prompts before rendering; subscription agent connectivity is still being built.
+prompts before rendering, or ask the connected subscription agent to author them.
 
 The H3 editor workflow needs a resolved **API Format** export from the installed
 ComfyUI frontend before ordinary import. An editor graph is now rejected with
 that guidance instead of being saved as a workflow with no usable controls.
-See [the integration blueprint](SCRAPPYVIBES-PIPELINE.md) for remaining stages.
+Use **H3 video — bind production references** to prepare that export, choosing
+the enabled image, video and audio reference counts. See
+[the integration blueprint](SCRAPPYVIBES-PIPELINE.md) for reference contracts.
 
 Custom nodes can declare their editable scalar widget explicitly:
 

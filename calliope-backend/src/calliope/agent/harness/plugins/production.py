@@ -24,6 +24,40 @@ class ReadProduction(ProductionModel):
     pass
 
 
+class ReadProductionBoards(ProductionModel):
+    clip_id: int | None = Field(default=None, gt=0)
+    board_id: str | None = None
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=2, ge=1, le=2)
+
+
+async def get_production_boards(ctx: ToolContext, args: dict):
+    request = ReadProductionBoards.model_validate(args)
+    state = ProductionStore(ctx.project_id).read()
+    boards = state["boards"]
+    if request.board_id:
+        boards = [b for b in boards if b["id"] == request.board_id]
+        if not boards:
+            raise ValueError("Board does not belong to this project")
+    if request.clip_id:
+        boards = [b for b in boards if b["clip_id"] == request.clip_id]
+    end = min(request.offset + request.limit, len(boards))
+    # Notes may contain long creative directions; keep paths and lineage intact.
+    return {
+        "ok": True,
+        "revision": state["revision"],
+        "board_count": len(boards),
+        "boards": [
+            {
+                **{k: v for k, v in b.items() if k != "note"},
+                "selected": state["selected_boards"].get(f"{b['clip_id']}:{b['stage']}") == b["id"],
+            }
+            for b in boards[request.offset : end]
+        ],
+        "next_offset": end if end < len(boards) else None,
+    }
+
+
 class ReadProductionWorkflow(ProductionModel):
     workflow_id: int = Field(gt=0)
 
@@ -313,10 +347,20 @@ async def select_board(ctx: ToolContext, args: dict):
 def register(registry: ToolRegistry):
     for name, description, model, executor in [
         (
+            "get_production_boards",
+            "Read compact, paginated saved boards with exact paths, lineage, selection status "
+            "and current revision. Filter by clip_id or exact board_id. Follow next_offset "
+            "until null before concluding a candidate is absent. Use this when get_production "
+            "is truncated; never ask the user for board paths the app already stores.",
+            ReadProductionBoards,
+            get_production_boards,
+        ),
+        (
             "get_production_job",
             "Read a project job's status, exact board/video lineage and paginated output indices "
             "without the large workflow graph. Use before saving a generated board or selecting "
-            "a video. Follow next_output_offset to read further outputs of a Blender frame sequence.",
+            "a video. Follow next_output_offset to read further outputs "
+            "of a Blender frame sequence.",
             ReadProductionJob,
             get_production_job,
         ),
