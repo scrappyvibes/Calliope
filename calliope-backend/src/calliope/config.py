@@ -5,7 +5,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -106,6 +106,7 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://127.0.0.1:11434/v1"
     llm_model: str = "llama3.2"
     llm_api_key: str | None = None
+    completion_provider: Literal["api", "claude", "codex"] = "api"
     # Named OpenAI-compatible endpoints. `llm_*` above always mirror the active
     # profile so LLMClient and env overrides keep working.
     llm_profiles: list[dict[str, Any]] = Field(default_factory=list)
@@ -317,6 +318,7 @@ class Settings(BaseSettings):
             "assets_dir": str(self.assets_dir),
             "db_name": self.db_name,
             "llm_base_url": self.llm_base_url,
+            "completion_provider": self.completion_provider,
             "llm_model": self.llm_model,
             "llm_api_key": bool(self.llm_api_key),
             "llm_profiles": profiles,
@@ -402,6 +404,7 @@ class Settings(BaseSettings):
             "assets_dir": str(self.assets_dir),
             "db_name": self.db_name,
             "llm_base_url": self.llm_base_url,
+            "completion_provider": self.completion_provider,
             "llm_model": self.llm_model,
             "llm_api_key": self.llm_api_key,
             "llm_profiles": self.llm_profiles,

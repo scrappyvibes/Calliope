@@ -42,6 +42,7 @@
 	const isDirty = $derived(dirtyKeys.length > 0);
 
 	const FIELD_TAB: Record<string, string> = {
+		completion_provider: 'llm',
 		llm_profiles: 'llm',
 		llm_active_id: 'llm',
 		llm_api_key: 'llm',
@@ -347,6 +348,19 @@
 			{:else if $settingsQuery.data}
 				{@const s = $settingsQuery.data}
 				{#if tab === 'llm'}
+					<section class="panel">
+						<h1>Story and planning provider</h1>
+						<label class="field">
+							<span class="field-label">Use for all agent roles and prompt rewriting</span>
+							<select class="field-input" value={String(draft.completion_provider ?? s.completion_provider ?? 'api')}
+								onchange={(event) => { draft.completion_provider = event.currentTarget.value; }}>
+								<option value="api">API profiles below</option>
+								<option value="claude">Claude subscription · local CLI login</option>
+								<option value="codex">Codex subscription · local ChatGPT login</option>
+							</select>
+						</label>
+						<p class="field-hint">Subscription mode uses the selected CLI's login and default model for every role, with no API fallback. Story conversations and attached storyboard images use the same saved project history.</p>
+					</section>
 					<section class="panel">
 						<div class="panel-head">
 							<div>

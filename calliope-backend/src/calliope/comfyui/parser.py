@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from calliope.comfyui.bindings import resolve_binding
 from calliope.comfyui.registry import (
-    ComfyOutputKind,
-    IMAGE_CLASSES,
     AUDIO_CLASSES,
+    IMAGE_CLASSES,
     VIDEO_CLASSES,
-    class_to_input_kind,
+    ComfyOutputKind,
     class_to_output_kind,
 )
 from calliope.comfyui.roles import (
@@ -23,6 +23,10 @@ def extract_default_value(node: dict[str, Any]) -> str | int | float | None:
     inputs = node.get("inputs") or {}
     if class_type in IMAGE_CLASSES or class_type in AUDIO_CLASSES or class_type in VIDEO_CLASSES:
         return None
+    field, _ = resolve_binding(node)
+    bound = inputs.get(field)
+    if isinstance(bound, (str, int, float)):
+        return bound
     if isinstance(inputs.get("text"), str):
         return inputs["text"]
     value = inputs.get("value")
@@ -44,12 +48,14 @@ def parse_dynamic_inputs(workflow: dict[str, Any]) -> list[dict[str, Any]]:
         kind, role, label = parse_title_tag(title)
         if kind != "input":
             continue
+        field, input_kind = resolve_binding(node)
         results.append(
             {
                 "nodeId": str(node_id),
                 "label": label or node.get("class_type", node_id),
                 "role": normalize_input_role(role),
-                "kind": class_to_input_kind(node.get("class_type", "")),
+                "kind": input_kind,
+                "field": field,
                 "defaultValue": extract_default_value(node),
                 "required": True,
             }

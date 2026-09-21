@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
-from typing import Any
-
 from pathlib import Path as _fs_path
+from typing import Any
 
 from calliope import config
 from calliope.comfyui.client import ComfyUIClient
@@ -18,6 +18,7 @@ from calliope.db import get_db
 from calliope.events.bus import event_bus
 from calliope.export.runner import run_export
 from calliope.queue.manager import queue_manager
+from calliope.queue.receipts import ensure_submitted, latest_receipt, update_receipt
 
 logger = logging.getLogger("calliope.worker")
 
@@ -67,7 +68,8 @@ class QueueWorker:
                 )
                 try:
                     outputs = await self._run_job(job)
-                    queue_manager.mark_done(job["id"], outputs)
+                    if not queue_manager.mark_done(job["id"], outputs):
+                        raise _CancelledByUser()
                     if job["kind"] == "export":
                         self._mark_project_completed(job["project_id"])
                     # Prompt snippet for canvas artifact labels: users
@@ -146,14 +148,22 @@ class QueueWorker:
         kind = job["kind"]
         use_dry = bool(config.settings.dry_run)
 
+        if kind == 'previs':
+            if use_dry:
+                raise RuntimeError('Disable dry-run to build actual Blender previs')
+            from calliope.previs import run_previs
+            return await run_previs(job, payload, self._stop)
+
         if kind == "export":
             # Export stitches local clips with ffmpeg — never touches ComfyUI,
             # and dry-run writes an mp4 placeholder (not the default PNG).
             return await run_export(job, payload, event_bus, dry_run=use_dry)
 
-        client = ComfyUIClient(config.settings.comfyui_base_url)
+        receipt = latest_receipt(job['id'])
+        server_url = receipt['server_url'] if receipt else config.settings.comfyui_base_url
+        client = ComfyUIClient(server_url)
         try:
-            if use_dry:
+            if use_dry and not receipt:
                 return await self._dry_run(job, payload)
 
             healthy = await client.health()
@@ -163,21 +173,27 @@ class QueueWorker:
                     "Start ComfyUI, or enable Dry-run in Settings only for placeholder testing."
                 )
 
-            workflow_id = job.get("workflow_id") or payload.get("workflow_id")
-            workflow = self._load_workflow(workflow_id)
-            if not workflow:
-                raise RuntimeError("No workflow found for job")
+            async def prepare():
+                for reference in payload.get('reference_manifest', []):
+                    digest = hashlib.sha256(_fs_path(reference['path']).read_bytes()).hexdigest()
+                    if digest != reference['sha256']:
+                        raise RuntimeError('Reference changed after this job was queued')
+                workflow_id = job.get("workflow_id") or payload.get("workflow_id")
+                workflow = payload.get('workflow_snapshot') or self._load_workflow(workflow_id)
+                if not workflow:
+                    raise RuntimeError("No workflow found for job")
+                input_values = payload.get("input_values") or {}
+                if payload.get("continue_source") and kind == "video":
+                    input_values = await self._resolve_continue_source(
+                        job, payload, workflow, dict(input_values)
+                    )
+                patched = patch_workflow(workflow, input_values)
+                return await client.prepare_media_inputs(patched)
 
-            input_values = payload.get("input_values") or {}
-            if payload.get("continue_source") and kind == "video":
-                input_values = await self._resolve_continue_source(
-                    job, payload, workflow, dict(input_values)
-                )
-            patched = patch_workflow(workflow, input_values)
-            patched = await client.prepare_media_inputs(patched)
-            prompt_id = await client.queue_prompt(patched)
-
-            history = await self._poll_history(client, prompt_id, job["id"])
+            if queue_manager.is_cancelled(job['id']):
+                raise _CancelledByUser()
+            receipt, history = await ensure_submitted(job['id'], client, prepare)
+            history = history or await self._poll_history(client, receipt['prompt_id'], job["id"])
             if not history:
                 if queue_manager.is_cancelled(job["id"]):
                     raise _CancelledByUser()
@@ -185,16 +201,21 @@ class QueueWorker:
 
             status = history.get("status") or {}
             if status.get("status_str") == "error" or status.get("completed") is False:
+                update_receipt(receipt['id'], 'failed', history=history)
                 messages = status.get("messages") or []
                 raise RuntimeError(f"ComfyUI error: {messages}")
 
+            update_receipt(receipt['id'], 'completed', history=history)
             outputs_meta = client.extract_outputs(history)
-            dest_dir = config.settings.assets_dir / str(project_id) / kind
+            dest_dir = (config.settings.assets_dir / str(project_id) / kind
+                        / str(job['id']) / receipt['id'])
             dest_dir.mkdir(parents=True, exist_ok=True)
             paths: list[str] = []
-            for meta in outputs_meta:
+            for index, meta in enumerate(outputs_meta):
                 filename = meta["filename"]
-                dest = dest_dir / filename
+                if not filename or _fs_path(filename).name != filename:
+                    raise RuntimeError('ComfyUI returned an invalid output filename')
+                dest = dest_dir / f'{index:03d}-{filename}'
                 await client.download_image(
                     filename,
                     subfolder=meta.get("subfolder", ""),
@@ -203,6 +224,8 @@ class QueueWorker:
                 )
                 paths.append(str(dest))
 
+            if queue_manager.is_cancelled(job['id']):
+                raise _CancelledByUser()
             self._apply_outputs_to_entities(job, payload, paths)
             return paths
         finally:
@@ -317,10 +340,10 @@ class QueueWorker:
             if self._stop.is_set():
                 return None
             # Stop button: the job row was flipped to 'cancelled' out-of-band.
-            # Interrupt the running ComfyUI prompt so the GPU stops NOW, then
-            # bail — the row already carries the terminal state.
+            # Delete only our pending prompt. Running work may finish; never
+            # interrupt unrelated renders on a shared ComfyUI server.
             if queue_manager.is_cancelled(job_id):
-                await client.interrupt()
+                await client.delete_pending_prompt(prompt_id)
                 return None
             history = await client.get_history(prompt_id)
             if history:
@@ -415,7 +438,7 @@ class QueueWorker:
     def _apply_outputs_to_entities(
         self, job: dict[str, Any], payload: dict[str, Any], paths: list[str]
     ) -> None:
-        if not paths:
+        if not paths or payload.get('storyboard_target') or payload.get('production_video_target'):
             return
         primary = paths[0]
         character_id = payload.get("character_id")

@@ -31,7 +31,17 @@ def test_tool_registry_schemas_valid():
         assert t.parameters.get("type") == "object", name
         assert isinstance(t.parameters.get("properties"), dict), name
         for pname, pdef in t.parameters["properties"].items():
-            assert isinstance(pdef, dict) and "type" in pdef, (name, pname)
+            assert isinstance(pdef, dict), (name, pname)
+            # Pydantic production tools use standard local references and
+            # nullable anyOf definitions, both valid JSON Schema forms.
+            variants = pdef.get("anyOf", [pdef])
+            for variant in variants:
+                if "$ref" in variant:
+                    ref = variant["$ref"]
+                    assert ref.startswith("#/$defs/"), (name, pname, ref)
+                    assert ref.removeprefix("#/$defs/") in t.parameters["$defs"]
+                else:
+                    assert "type" in variant, (name, pname)
         required = t.parameters.get("required", [])
         assert all(r in t.parameters["properties"] for r in required), name
 

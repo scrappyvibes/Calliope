@@ -3,6 +3,8 @@ export type ComfyOutputKind = 'image' | 'video' | 'other';
 
 export interface ComfyDynamicInput {
 	nodeId: string;
+	/** Exact widget field used by both discovery and generation. */
+	field?: string;
 	label: string;
 	/** Role from title tag, e.g. (Input:prompt) → "prompt". Null for plain (Input). */
 	role?: string | null;

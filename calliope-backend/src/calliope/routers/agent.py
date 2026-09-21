@@ -406,10 +406,9 @@ async def post_message(session_id: int, payload: MessageCreate) -> dict[str, Any
 
 @router.post("/sessions/{session_id}/cancel")
 async def cancel_session(session_id: int) -> dict[str, Any]:
-    """Stop = stop everything this session started: the LLM turn AND the GPU
-    jobs it enqueued. Agent jobs stamp session_id into their payload, so the
-    queue can find and cancel them; the worker's poll loop sees the flipped
-    row and interrupts the running ComfyUI prompt."""
+    """Stop the LLM and cancel this session's jobs. The worker removes owned
+    pending prompts; already running Comfy renders may finish. Never use a
+    global GPU interrupt on the shared server."""
     from calliope.queue.manager import queue_manager
 
     cancelled = await runner.cancel(session_id)

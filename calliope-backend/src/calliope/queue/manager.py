@@ -18,6 +18,12 @@ class QueueManager:
     def reset_stale_jobs(self) -> int:
         conn = get_db(config.settings.db_path)
         try:
+            if not config.settings.dry_run:
+                conn.execute(
+                    "UPDATE jobs SET status='failed', error='untracked_comfy_render' "
+                    "WHERE status='running' AND kind!='export' AND NOT EXISTS "
+                    "(SELECT 1 FROM render_attempts WHERE job_id=jobs.id)"
+                )
             cur = conn.execute(
                 "UPDATE jobs SET status = 'pending', started_at = NULL WHERE status = 'running'"
             )
@@ -56,6 +62,7 @@ class QueueManager:
             return None
         conn = get_db(config.settings.db_path)
         try:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT * FROM jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
             ).fetchone()
@@ -75,17 +82,18 @@ class QueueManager:
         finally:
             conn.close()
 
-    def mark_done(self, job_id: int, output_paths: list[str]) -> None:
+    def mark_done(self, job_id: int, output_paths: list[str]) -> bool:
         conn = get_db(config.settings.db_path)
         try:
-            conn.execute(
+            cur = conn.execute(
                 """
                 UPDATE jobs SET status = 'done', output_paths_json = ?, error = NULL,
-                completed_at = CURRENT_TIMESTAMP WHERE id = ?
+                completed_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('pending', 'running')
                 """,
                 (json.dumps(output_paths), job_id),
             )
             conn.commit()
+            return cur.rowcount > 0
         finally:
             conn.close()
 
@@ -95,7 +103,7 @@ class QueueManager:
             conn.execute(
                 """
                 UPDATE jobs SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP,
-                retry_count = retry_count + 1 WHERE id = ?
+                retry_count = retry_count + 1 WHERE id = ? AND status IN ('pending', 'running')
                 """,
                 (error[:2000], job_id),
             )
@@ -109,10 +117,12 @@ class QueueManager:
             row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
             if not row:
                 return None
+            if row['status'] != 'failed' or row['error'] == 'untracked_comfy_render':
+                return row_to_dict(row)
             conn.execute(
                 """
                 UPDATE jobs SET status = 'pending', error = NULL, started_at = NULL,
-                completed_at = NULL WHERE id = ?
+                completed_at = NULL WHERE id = ? AND status = 'failed'
                 """,
                 (job_id,),
             )
@@ -168,12 +178,14 @@ class QueueManager:
             conn.close()
 
     def is_cancelled(self, job_id: int) -> bool:
+        if job_id is None:
+            return False
         conn = get_db(config.settings.db_path)
         try:
             row = conn.execute(
                 "SELECT status FROM jobs WHERE id = ?", (job_id,)
             ).fetchone()
-            return bool(row) and row["status"] not in ("pending", "running")
+            return not row or row["status"] not in ("pending", "running")
         finally:
             conn.close()
 

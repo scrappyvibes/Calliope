@@ -4,26 +4,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from calliope.comfyui.registry import class_to_patch_field
-
-
-def _resolve_field(field: str, inputs: dict[str, Any]) -> str:
-    """Map the computed patch field onto a key that exists on this node.
-
-    Known variants:
-    - text ↔ value (PrimitiveString-style nodes expose `value`, not `text`).
-    - audio ↔ audio: (VHS_LoadAudio names its widget `audio:` with a colon).
-    The fallback stays guarded to these exact sibling pairs — never a fuzzy
-    match — so an unknown node can't have its values written to some
-    unrelated key ComfyUI would silently ignore.
-    """
-    if field in inputs:
-        return field
-    siblings = {"text": "value", "value": "text", "audio": "audio:", "audio:": "audio"}
-    alt = siblings.get(field)
-    if alt and alt in inputs:
-        return alt
-    return field
+from calliope.comfyui.bindings import resolve_binding
 
 
 def patch_workflow(
@@ -39,7 +20,7 @@ def patch_workflow(
         if not isinstance(node, dict):
             continue
         inputs = dict(node.get("inputs") or {})
-        field = _resolve_field(class_to_patch_field(node.get("class_type", "")), inputs)
+        field, _ = resolve_binding(node)
         inputs[field] = value
         node["inputs"] = inputs
         patched[key] = node

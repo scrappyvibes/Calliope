@@ -84,6 +84,7 @@ class LLMClient:
         self.base_url = (base_url or settings.llm_base_url).rstrip("/")
         self.model = model or settings.llm_model
         self.api_key = api_key if api_key is not None else settings.llm_api_key
+        self.completion_provider = settings.completion_provider
         # With every completion streamed (chat/chat_with_tools consume
         # chat_stream), the timeout bounds the gap BETWEEN chunks, not total
         # generation time: a thinking model streaming reasoning_content keeps
@@ -311,6 +312,28 @@ class LLMClient:
         LM-Studio-style fallbacks the blocking path has. A 400 that survives
         both drops surfaces as HTTPStatusError.
         """
+        if self.completion_provider in {"claude", "codex"}:
+            from calliope.agent.subscription import claude_completion, codex_completion
+
+            subscription_messages = messages
+            if response_format:
+                subscription_messages = [*messages, {
+                    "role": "system",
+                    "content": "The assistant content must satisfy this response format: "
+                    + json.dumps(response_format),
+                }]
+            complete = claude_completion if self.completion_provider == "claude" else codex_completion
+            reply = await complete(
+                subscription_messages, tools=tools, tool_choice=tool_choice
+            )
+            if reply["content"]:
+                yield {"type": "delta", "content": reply["content"]}
+            for call in reply["tool_calls"]:
+                yield {"type": "tool_call", "tool_call": call}
+            yield {"type": "done"}
+            return
+        if self.completion_provider != "api":
+            raise ValueError("Unknown completion provider; refusing an API fallback")
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,

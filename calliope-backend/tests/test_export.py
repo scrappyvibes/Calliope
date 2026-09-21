@@ -203,7 +203,7 @@ def test_cancel_export_skips_comfy_interrupt(client, monkeypatch):
         client.post("/api/jobs/resume")
 
 
-def test_cancel_comfy_job_calls_interrupt(client, monkeypatch):
+def test_cancel_unsubmitted_comfy_job_never_interrupts(client, monkeypatch):
     calls = {"interrupt": 0, "kill": 0}
 
     async def fake_interrupt(self):
@@ -222,7 +222,7 @@ def test_cancel_comfy_job_calls_interrupt(client, monkeypatch):
         job_id = client.post(f"/api/jobs?project_id={pid}", json={"kind": "image"}).json()["id"]
         r = client.post(f"/api/jobs/{job_id}/cancel")
         assert r.status_code == 200
-        assert calls["interrupt"] == 1
+        assert calls["interrupt"] == 0
         assert calls["kill"] == 0
     finally:
         client.post("/api/jobs/resume")

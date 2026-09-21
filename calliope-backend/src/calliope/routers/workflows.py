@@ -5,13 +5,22 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from calliope.comfyui.adapters import adapt_h3_workflow, adapt_style_workflow, build_board_workflow
+from calliope.comfyui.bindings import validate_api_workflow
 from calliope.comfyui.parser import parse_dynamic_inputs, parse_dynamic_outputs
 from calliope.comfyui.profiles import detect_prompt_profile
 from calliope.config import settings
 from calliope.db import get_db, row_to_dict
-from calliope.models.schemas import WorkflowAnalyze, WorkflowCreate, WorkflowUpdate
+from calliope.models.schemas import WorkflowAdapt, WorkflowAnalyze, WorkflowCreate, WorkflowUpdate
 
 router = APIRouter()
+
+
+def _validate(workflow: dict[str, Any]) -> None:
+    try:
+        validate_api_workflow(workflow)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _serialize_workflow(row: Any) -> dict[str, Any]:
@@ -25,12 +34,36 @@ def _serialize_workflow(row: Any) -> dict[str, Any]:
 
 @router.post("/analyze")
 async def analyze_workflow(payload: WorkflowAnalyze) -> dict[str, Any]:
+    _validate(payload.workflow_json)
     inputs = parse_dynamic_inputs(payload.workflow_json)
     outputs = parse_dynamic_outputs(payload.workflow_json)
     return {
         "inputs": inputs,
         "outputs": outputs,
         "suggested_profile": detect_prompt_profile(payload.workflow_json),
+    }
+
+
+@router.post("/adapt")
+async def adapt_workflow(payload: WorkflowAdapt) -> dict[str, Any]:
+    try:
+        if payload.adapter in ("scrappyvibes_rough_board", "scrappyvibes_refined_board"):
+            result = build_board_workflow(payload.workflow_json, refined=payload.adapter == "scrappyvibes_refined_board")
+        elif payload.adapter == "scrappyvibes_h3_references":
+            result = adapt_h3_workflow(
+                payload.workflow_json, image_count=payload.image_count,
+                video_count=payload.video_count, audio_count=payload.audio_count,
+            )
+        else:
+            result = adapt_style_workflow(payload.workflow_json)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    graph = result["workflow_json"]
+    return {
+        **result,
+        "inputs": parse_dynamic_inputs(graph),
+        "outputs": parse_dynamic_outputs(graph),
+        "suggested_profile": detect_prompt_profile(graph),
     }
 
 
@@ -48,6 +81,7 @@ async def reanalyze_workflow(workflow_id: int) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail="Workflow not found")
         data = row_to_dict(row)
         workflow = json.loads(data["workflow_json"])
+        _validate(workflow)
         inputs = parse_dynamic_inputs(workflow)
         outputs = parse_dynamic_outputs(workflow)
         conn.execute(
@@ -110,6 +144,7 @@ async def dedupe_workflows() -> dict[str, Any]:
 
 @router.post("")
 async def create_workflow(payload: WorkflowCreate) -> dict[str, Any]:
+    _validate(payload.workflow_json)
     inputs = parse_dynamic_inputs(payload.workflow_json)
     outputs = parse_dynamic_outputs(payload.workflow_json)
     profile = payload.prompt_profile or detect_prompt_profile(payload.workflow_json)

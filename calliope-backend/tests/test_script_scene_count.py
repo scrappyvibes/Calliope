@@ -1,6 +1,8 @@
 """Script regenerate must honor an expanded scene board."""
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 from calliope.agent.prompts import build_script_messages, recommend_scene_count
 
 
@@ -50,6 +52,11 @@ def test_script_regenerate_keeps_expanded_count(client, monkeypatch):
         }
 
     monkeypatch.setattr("calliope.agent.script_agent.generate_structured", fake_structured)
+    # Script generation now expands clip coverage after persisting the scenes.
+    # This test owns scene-count behavior; coverage has its own test suite and
+    # must not contact a real LLM from this mocked route test.
+    monkeypatch.setattr("calliope.agent.coverage_agent.expand_scene_coverage",
+                        AsyncMock(return_value={"scenes": []}))
 
     r = client.post("/api/projects", json={"title": "Expand", "idea": "desert", "target_duration": "30 seconds"})
     pid = r.json()["id"]

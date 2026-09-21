@@ -1,8 +1,9 @@
-"""Stop must stop the GPU work, not just the LLM turn.
+"""Stop cancels the session's queued work, not just its LLM turn.
 
 Agent-enqueued jobs stamp session_id into their payload; cancel_by_session
 flips every pending/running one to 'cancelled'; the worker's poll loop sees
-the flipped row and interrupts the running ComfyUI prompt.
+the flipped row and removes its named pending prompt. An already running
+render may finish; a shared ComfyUI server must never be globally interrupted.
 """
 from __future__ import annotations
 

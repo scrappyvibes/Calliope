@@ -84,6 +84,7 @@ export interface LlmProfile {
 }
 
 export interface Settings {
+    completion_provider: 'api' | 'claude' | 'codex';
 	host: string;
 	port: number;
 	data_dir: string;
@@ -115,6 +116,69 @@ import type {
 	ComfyDynamicOutput,
 } from './comfy/types';
 export type { Job, Scene, SceneVideoSettings, Clip, Workflow, ComfyDynamicInput, ComfyDynamicOutput };
+
+export interface ProductionCamera {
+	position: [number, number, number];
+	target: [number, number, number];
+	lens_mm: number;
+	sensor_width_mm: number;
+}
+export interface ProductionState {
+	video_takes: Array<{id: string; clip_id: number; generation_job_id: number; output_index: number; path: string; stale: boolean}>;
+	selected_videos: Record<string, string>;
+	boards: StoryboardTake[];
+	selected_boards: Record<string, string>;
+	revision: number;
+	project_id: number;
+	world_hash: string;
+	world: {
+		units: 'meters'; up_axis: 'Z'; fps: 24;
+		objects: Array<{ id: string; kind: 'box' | 'sphere' | 'cylinder' | 'plane';
+			position: [number, number, number]; rotation: [number, number, number];
+			scale: [number, number, number]; color: [number, number, number] }>;
+	};
+	shots: Array<{ clip_id: number; camera: ProductionCamera; end_camera: ProductionCamera | null;
+		frame_start: number; frame_end: number; source_hash: string; rough_board_id: string | null }>;
+}
+export interface StoryboardTake {
+	id: string; clip_id: number; stage: 'rough' | 'refined' | 'styled'; path: string;
+	sha256: string; stale: boolean; source_board_id: string | null;
+	previs_job_id: number | null; previs_frame: number | null; generation_job_id: number | null; note: string;
+}
+export interface BoardSource {
+	expected_revision: number; clip_id: number; stage: 'rough' | 'refined' | 'styled';
+	source_board_id?: string | null; previs_job_id?: number | null; previs_frame?: number | null;
+}
+export const productionApi = {
+	selectVideo: (projectId: number, expected_revision: number, generation_job_id: number, output_index: number) =>
+		api<ProductionState>(`/api/projects/${projectId}/production/videos/select`, {method:'POST', body:JSON.stringify({expected_revision,generation_job_id,output_index})}),
+	generateVideo: (projectId: number, payload: {
+		expected_revision: number; clip_id: number; workflow_id: number; prompt: string;
+		duration_seconds: number; seed: number; styled_board_id: string;
+		previs_job_id: number | null; reference_paths: Record<string, string>;
+	}) => api<Job>(`/api/projects/${projectId}/production/videos/generate`, {method:'POST', body:JSON.stringify(payload)}),
+	uploadBoard: (projectId: number, metadata: BoardSource, file: File) => {
+		const form = new FormData(); form.append('metadata', JSON.stringify(metadata)); form.append('file', file);
+		return apiUpload<ProductionState>(`/api/projects/${projectId}/production/boards/upload`, form);
+	},
+	generateBoard: (projectId: number, payload: BoardSource & {workflow_id: number; input_values: Record<string, string | number>}) =>
+		api<Job>(`/api/projects/${projectId}/production/boards/generate`, {method:'POST', body:JSON.stringify(payload)}),
+	registerBoard: (projectId: number, payload: BoardSource & {generation_job_id: number; output_index: number}) =>
+		api<ProductionState>(`/api/projects/${projectId}/production/boards/register`, {method:'POST', body:JSON.stringify(payload)}),
+	selectBoard: (projectId: number, expected_revision: number, board_id: string) =>
+		api<ProductionState>(`/api/projects/${projectId}/production/boards/select`, {method:'POST', body:JSON.stringify({expected_revision,board_id})}),
+	render: (projectId: number, expected_revision: number, clip_ids: number[], mode: 'stills' | 'animation') =>
+		api<Job>(`/api/projects/${projectId}/production/previs`, {
+			method: 'POST', body: JSON.stringify({ expected_revision, clip_ids, mode }),
+		}),
+	get: (projectId: number) => api<ProductionState>(`/api/projects/${projectId}/production`),
+	setCamera: (projectId: number, clipId: number, payload: {
+		expected_revision: number; camera: ProductionCamera; end_camera: ProductionCamera | null; frame_end: number;
+		rough_board_id?: string | null;
+	}) => api<ProductionState>(`/api/projects/${projectId}/production/shots/${clipId}/camera`, {
+		method: 'PUT', body: JSON.stringify(payload),
+	}),
+};
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
 	const res = await fetch(`${API_BASE}${path}`, {
@@ -268,6 +332,21 @@ export const settings = {
 
 export const workflows = {
 	list: () => api<Workflow[]>('/api/workflows'),
+	adapt: (workflow_json: Record<string, unknown>, options: {
+		adapter?: 'scrappyvibes_style_external_prompts' | 'scrappyvibes_h3_references' | 'scrappyvibes_rough_board' | 'scrappyvibes_refined_board';
+		image_count?: number; video_count?: number; audio_count?: number;
+	} = {}) =>
+		api<{
+			workflow_json: Record<string, unknown>;
+			inputs: ComfyDynamicInput[];
+			outputs: ComfyDynamicOutput[];
+			kind: 'image' | 'video';
+			suggested_profile: string;
+			notes: string[];
+		}>('/api/workflows/adapt', {
+			method: 'POST',
+			body: JSON.stringify({ workflow_json, adapter: 'scrappyvibes_style_external_prompts', ...options }),
+		}),
 	analyze: (workflow_json: Record<string, unknown>) =>
 		api<{
 			inputs: ComfyDynamicInput[];
@@ -304,7 +383,7 @@ export const jobsApi = {
 	list: (projectId?: number) =>
 		api<Job[]>(`/api/jobs${projectId != null ? `?project_id=${projectId}` : ''}`),
 	retry: (id: number) => api<Job>(`/api/jobs/${id}/retry`, { method: 'POST' }),
-	cancel: (id: number) => api<{ ok: boolean }>(`/api/jobs/${id}/cancel`, { method: 'POST' }),
+	cancel: (id: number) => api<{ ok: boolean; message?: string }>(`/api/jobs/${id}/cancel`, { method: 'POST' }),
 	pause: () => api<{ ok: boolean; paused: boolean }>('/api/jobs/pause', { method: 'POST' }),
 	resume: () => api<{ ok: boolean; paused: boolean }>('/api/jobs/resume', { method: 'POST' }),
 	queueStatus: () => api<{ paused: boolean }>('/api/jobs/queue-status'),

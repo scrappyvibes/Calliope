@@ -5,7 +5,10 @@ from typing import Literal
 
 ComfyInputKind = Literal["text", "textarea", "number", "image", "image_url", "audio", "video"]
 ComfyOutputKind = Literal["image", "video", "other"]
-PatchField = Literal["image", "url", "audio", "video", "file", "text", "value", "int", "float"]
+PatchField = Literal[
+    "image", "url", "audio", "video", "file", "text", "value", "int", "float",
+    "seed", "noise_seed",
+]
 
 TEXT_AREA_CLASSES = frozenset(
     {
@@ -18,7 +21,8 @@ TEXT_AREA_CLASSES = frozenset(
     }
 )
 NUMBER_CLASSES = frozenset(
-    {"INT", "FLOAT", "PrimitiveInt", "PrimitiveFloat", "KSampler", "KSamplerAdvanced"}
+    {"INT", "FLOAT", "PrimitiveInt", "PrimitiveFloat", "KSampler", "KSamplerAdvanced",
+     "RandomNoise", "Seed (rgthree)"}
 )
 IMAGE_CLASSES = frozenset({"LoadImage", "ImageLoader", "ETN_LoadImageBase64"})
 IMAGE_URL_CLASSES = frozenset({"Load Image From Url (mtb)"})
@@ -62,6 +66,10 @@ def class_to_input_kind(class_type: str) -> ComfyInputKind:
 
 
 def class_to_patch_field(class_type: str) -> PatchField:
+    if class_type in {"Seed (rgthree)", "KSampler"}:
+        return "seed"
+    if class_type in {"RandomNoise", "KSamplerAdvanced"}:
+        return "noise_seed"
     if class_type in IMAGE_CLASSES:
         return "image"
     if class_type in IMAGE_URL_CLASSES:

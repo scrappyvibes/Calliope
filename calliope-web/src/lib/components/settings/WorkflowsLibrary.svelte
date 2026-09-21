@@ -22,6 +22,13 @@
 	let analyzedOutputs = $state<ComfyDynamicOutput[]>([]);
 	let analyzed = $state(false);
 	let pendingJson = $state<Record<string, unknown> | null>(null);
+	let importMode = $state<'standard' | 'style' | 'h3' | 'rough' | 'refined'>('standard');
+	let h3Images = $state(1);
+	let h3Videos = $state(0);
+	let h3Audio = $state(0);
+	let adapterNotes = $state<string[]>([]);
+	let analyzing = $state(false);
+	let analysisVersion = 0;
 
 	let wfName = $state('');
 	let wfKind = $state<'image' | 'video'>('image');
@@ -36,6 +43,9 @@
 	let detailsId = $state<number | null>(null);
 
 	async function analyzeRaw(text: string) {
+		const version = ++analysisVersion;
+		analyzing = true;
+		adapterNotes = [];
 		parseError = '';
 		analyzed = false;
 		analyzedInputs = [];
@@ -43,8 +53,24 @@
 		pendingJson = null;
 		try {
 			const json = JSON.parse(text) as Record<string, unknown>;
-			pendingJson = json;
-			const result = await workflows.analyze(json);
+			let result: Awaited<ReturnType<typeof workflows.analyze>>;
+			if (importMode !== 'standard') {
+				const adapted = await workflows.adapt(json, importMode === 'h3' ? {
+					adapter: 'scrappyvibes_h3_references', image_count: h3Images,
+					video_count: h3Videos, audio_count: h3Audio,
+				} : importMode === 'rough' || importMode === 'refined' ? {
+					adapter: importMode === 'rough' ? 'scrappyvibes_rough_board' : 'scrappyvibes_refined_board',
+				} : {});
+				if (version !== analysisVersion) return;
+				result = adapted;
+				pendingJson = adapted.workflow_json;
+				adapterNotes = adapted.notes;
+				wfKind = adapted.kind;
+			} else {
+				result = await workflows.analyze(json);
+				if (version !== analysisVersion) return;
+				pendingJson = json;
+			}
 			analyzedInputs = result.inputs;
 			analyzedOutputs = result.outputs;
 			analyzed = true;
@@ -53,7 +79,10 @@
 				wfName = uploadedFileName.replace(/\.json$/i, '');
 			}
 		} catch (err) {
+			if (version !== analysisVersion) return;
 			parseError = err instanceof Error ? err.message : t('wf.invalidJson');
+		} finally {
+			if (version === analysisVersion) analyzing = false;
 		}
 	}
 
@@ -93,6 +122,7 @@
 			wfDescription = '';
 			wfKind = 'image';
 			wfProfile = 'prose';
+			adapterNotes = [];
 			client.invalidateQueries({ queryKey: ['workflows'] });
 			toast.success(t('wf.savedToLibrary', { name }));
 		} catch (err) {
@@ -181,6 +211,28 @@
 
 	<div class="register panel">
 		<h3>{t('wf.analyzeRegister')}</h3>
+		<label class="field">
+			<span class="field-label">Import preparation</span>
+			<select class="field-select" bind:value={importMode}
+				onchange={() => { if (jsonText) void analyzeRaw(jsonText); }} disabled={saving}>
+				<option value="standard">Use existing workflow</option>
+				<option value="style">GPT to Style — supply prompts from the agent</option>
+				<option value="h3">H3 video — bind production references</option>
+				<option value="rough">Rough storyboard — text to image from A’s Krea models</option>
+				<option value="refined">Refined storyboard — Blender frame to image from A’s Krea models</option>
+			</select>
+			{#if importMode === 'style'}
+				<span class="field-hint">Creates a copy with scene and second-pass prompt inputs. Removes the embedded Claude API calls; keeps your styling settings.</span>
+			{/if}
+		</label>
+		{#if importMode === 'h3'}
+			<p class="field-hint">Export API Format with the reference loaders you need enabled. Choose how many slots to keep (12 combined maximum). Video references use 24 fps without audio.</p>
+			<div class="h3-counts">
+				<label class="field"><span class="field-label">Pictures</span><input class="field-input" type="number" min="0" max="9" step="1" bind:value={h3Images} onchange={() => jsonText && analyzeRaw(jsonText)} /></label>
+				<label class="field"><span class="field-label">Videos</span><input class="field-input" type="number" min="0" max="3" step="1" bind:value={h3Videos} onchange={() => jsonText && analyzeRaw(jsonText)} /></label>
+				<label class="field"><span class="field-label">Audio references</span><input class="field-input" type="number" min="0" max="3" step="1" bind:value={h3Audio} onchange={() => jsonText && analyzeRaw(jsonText)} /></label>
+			</div>
+		{/if}
 		<div
 			class="drop"
 			class:dragging
@@ -221,7 +273,18 @@
 				<span class="field-label">{t('wf.jsonPreview')}</span>
 				<textarea class="field-textarea mono preview" rows="8" readonly value={jsonText}></textarea>
 			</label>
-			<Button variant="secondary" size="sm" onclick={() => analyzeRaw(jsonText)}>{t('wf.reanalyze')}</Button>
+			<Button variant="secondary" size="sm" loading={analyzing} disabled={saving} onclick={() => analyzeRaw(jsonText)}>{t('wf.reanalyze')}</Button>
+		{/if}
+		{#if adapterNotes.length}
+			<div class="adapter-notes" role="status">
+				<strong>Prepared production workflow</strong>
+				<ul>{#each adapterNotes as note}<li>{note}</li>{/each}</ul>
+				<details>
+					<summary>Preview prepared workflow</summary>
+					<textarea class="field-textarea mono preview" rows="8" readonly
+						aria-label="Prepared workflow JSON" value={JSON.stringify(pendingJson, null, 2)}></textarea>
+				</details>
+			</div>
 		{/if}
 
 		{#if parseError}
@@ -291,7 +354,7 @@
 					placeholder={t('wf.descPlaceholder')}
 				></textarea>
 			</label>
-			<Button variant="primary" loading={saving} disabled={!wfName.trim()} onclick={saveToLibrary}>
+			<Button variant="primary" loading={saving} disabled={!wfName.trim() || analyzing} onclick={saveToLibrary}>
 				{t('wf.saveToLibrary')}
 			</Button>
 		{/if}
@@ -425,6 +488,17 @@
 />
 
 <style>
+	.h3-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-md); }
+	.adapter-notes {
+		margin: var(--space-md) 0;
+		padding: var(--space-md);
+		border-left: 3px solid var(--accent, #d4a96a);
+		background: var(--bg-elevated, rgba(212, 169, 106, 0.06));
+		font-size: 0.875rem;
+		line-height: 1.6;
+	}
+	.adapter-notes ul { margin: 0.5rem 0; padding-left: 1.25rem; }
+	.adapter-notes summary { cursor: pointer; }
 	.block-head {
 		display: flex;
 		justify-content: space-between;

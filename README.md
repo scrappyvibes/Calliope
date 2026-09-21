@@ -2,6 +2,18 @@
 
 Calliope is a local-first story-to-video studio. You type a story idea; Calliope drafts a storyline with beats, characters, and locations, writes a screenplay-faithful per-scene script, then **breaks each scene into shot clips** and generates one video per clip by driving your own ComfyUI install. When the clips are done, one click stitches them into a finished film with crossfades and matched loudness (ffmpeg). Everything runs on your machine: projects live in SQLite, media lives in folders, and no cloud service is involved beyond the LLM endpoint you point it at.
 
+## ScrappyVibes production branch
+
+This fork adds a shared-world Blender stage and versioned storyboard/video takes. See [the implementation checkpoint](SCRAPPYVIBES-PIPELINE.md) for verified behavior and remaining work.
+
+1. Choose Claude or Codex subscription in Settings → LLMs, then use project chat to develop the story, scene and shot clips.
+2. Import workflow A in Settings → Workflows. Its import menu can also build separate **Rough storyboard** and **Refined storyboard** presets from the same installed Krea model names. Rough boards need only a prompt; refinement uses a rendered Blender frame. These presets do not change A's styling recipe.
+3. In **Previs**, select a shot, generate and review a rough board, then link it under **Rough board for Blender**. Ask project chat to inspect the board and set shared objects and cameras. Rough images are packed into the `.blend` as camera references; translating a drawing into geometry is an agent-directed blocking step, not automatic reconstruction.
+4. Render saved views or moving previs. Generate a refined board from its exact job/frame, then style that board with adapted workflow A. Select the board you want to animate.
+5. Export workflow B in ComfyUI's API format with the reference loaders you need enabled. Import it with **H3 video — bind production references**. On the shot, bind the styled board and Blender motion, write the H3 prompt, and generate a candidate. Inspect the result before selecting it for the clip. **Revise this attempt** restores its saved prompt and inputs for another take.
+
+Blender and ffmpeg/ffprobe must be available locally. Set `CALLIOPE_BLENDER_BINARY` if Blender is not found automatically. Production source lives in `calliope-backend/data/production/`; media and job receipts remain local. Camera/world edits flag dependent takes as stale while retaining earlier outputs.
+
 <img width="2003" height="1093" alt="Screenshot 2026-09-06 050058" src="https://github.com/user-attachments/assets/27771fac-3ad2-47c3-9d4a-78cfa6f41f91" />
 
 
@@ -20,7 +32,8 @@ Calliope is a local-first story-to-video studio. You type a story idea; Calliope
 - Python 3.11+
 - Node.js 18+ (npm)
 - A running ComfyUI install, with the models your workflows need already set up
-- An OpenAI-compatible LLM endpoint — local (LM Studio, Ollama, etc.) or hosted
+- An OpenAI-compatible LLM endpoint, Claude Code CLI signed in with a Claude plan,
+  or Codex CLI signed in with ChatGPT
 - ffmpeg on PATH — needed for film export
 
 **1. Backend (FastAPI)**
@@ -44,7 +57,52 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. The dev server proxies `/api` to the backend on `127.0.0.1:8247`.
 
+### ScrappyVibes subscription connection (in progress)
+
+In **Settings → LLMs → Story and planning provider**, select **Claude subscription**
+or **Codex subscription** and save. Install the selected CLI on PATH and run
+`claude auth login` or `codex login` first. Calliope uses the subscription login
+and the CLI's default model for every agent role, including story,
+script and prompt rewriting. API profile assignments apply only in API mode.
+Subscription failures never fall back to a paid API request.
+
+Calliope owns the conversation history and executes validated tool proposals through
+its existing scoped harness. Claude runs without builtin tools or inherited
+customizations. Codex runs in a temporary read-only directory with shell and
+multi-agent tools disabled and user configuration excluded. Replies appear once
+each completion finishes. Both transports pass attached images to the model,
+preserving their order in conversation history; remote image URLs are rejected.
+The production state, Blender stages and workflow B integration remain in progress.
+See [the implementation checkpoint](SCRAPPYVIBES-PIPELINE.md).
+
 ## First run
+
+### ScrappyVibes workflow preparation
+
+In Settings → Workflows, choose **GPT to Style — supply prompts from the agent**
+under **Import preparation**, then select the original `GPT to Style.json`.
+Review the prepared inputs and save it to the library. This creates a separate
+graph with a refined-board input, scene and second-pass prompts, style prepend
+and append, and a correctly bound seed. It preserves the render settings and
+removes the embedded Claude API calls and unused preview branches. Supply both
+prompts before rendering; subscription agent connectivity is still being built.
+
+The H3 editor workflow needs a resolved **API Format** export from the installed
+ComfyUI frontend before ordinary import. An editor graph is now rejected with
+that guidance instead of being saved as a workflow with no usable controls.
+See [the integration blueprint](SCRAPPYVIBES-PIPELINE.md) for remaining stages.
+
+Custom nodes can declare their editable scalar widget explicitly:
+
+```json
+"_meta": {
+  "title": "Seed (Input:seed)",
+  "calliope_input": { "field": "seed", "kind": "number" }
+}
+```
+
+The field must exist and must not be a graph connection or structured widget.
+Discovery and patching use the same binding; legacy tagged nodes still work.
 
 Open the app, go to **Settings**, and set:
 

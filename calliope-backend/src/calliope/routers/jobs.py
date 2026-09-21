@@ -17,6 +17,7 @@ from calliope.models.schemas import (
     PreviewPromptRequest,
 )
 from calliope.queue.manager import queue_manager
+from calliope.queue.receipts import latest_receipt
 
 router = APIRouter()
 
@@ -27,6 +28,11 @@ def _job_public(job: dict[str, Any]) -> dict[str, Any]:
     out["output_paths"] = json.loads(job.get("output_paths_json") or "[]")
     out.pop("payload_json", None)
     out.pop("output_paths_json", None)
+    receipt = latest_receipt(job['id'])
+    out['render_receipt'] = {
+        key: receipt[key] for key in
+        ('id', 'server_url', 'prompt_id', 'state', 'graph_sha256', 'created_at')
+    } if receipt else None
     return out
 
 
@@ -169,6 +175,10 @@ async def get_job(job_id: int) -> dict[str, Any]:
 
 @router.post("/{job_id}/retry")
 async def retry_job(job_id: int) -> dict[str, Any]:
+    current = queue_manager.get_job(job_id)
+    if current and (current['status'] != 'failed'
+                    or current.get('error') == 'untracked_comfy_render'):
+        raise HTTPException(status_code=409, detail='This job cannot be retried automatically')
     job = queue_manager.retry(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -186,10 +196,17 @@ async def cancel_job(job_id: int) -> dict[str, Any]:
     if job["kind"] == "export":
         # Export runs local ffmpeg, not Comfy — kill the process instead.
         kill_running(job_id)
+    elif job['kind'] == 'previs':
+        return {'ok': True, 'message': 'Previs cancelled; the worker will stop its owned process.'}
     else:
-        client = ComfyUIClient()
+        receipt = latest_receipt(job_id)
+        if not receipt:
+            return {"ok": True, "message": "Cancelled before submission"}
+        client = ComfyUIClient(receipt['server_url'])
         try:
-            await client.interrupt()
+            await client.delete_pending_prompt(receipt['prompt_id'])
         finally:
             await client.close()
+        return {"ok": True, "message": "Stopped tracking; removed pending render. "
+                "An already running render may finish on ComfyUI."}
     return {"ok": True}

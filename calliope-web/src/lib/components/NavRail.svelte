@@ -9,6 +9,7 @@
 			{ id: 'story', key: 'nav.story', icon: 'story' },
 			{ id: 'assets', key: 'nav.assets', icon: 'assets' },
 			{ id: 'script', key: 'nav.script', icon: 'script' },
+			{ id: 'production', key: 'nav.script', icon: 'camera' },
 			{ id: 'video', key: 'nav.video', icon: 'video' },
 		] as { id: string; key: string; icon: IconName }[],
 	);
@@ -39,7 +40,7 @@
 		<button
 			class="nav-item"
 			class:active={active === item.id}
-			title={t(item.key)}
+			title={item.id === 'production' ? 'Previs' : t(item.key)}
 			aria-current={active === item.id ? 'page' : undefined}
 			onclick={() => onSelect?.(item.id)}
 		>
@@ -51,7 +52,7 @@
 					</span>
 				{/if}
 			</span>
-			<span class="label">{t(item.key)}</span>
+			<span class="label">{item.id === 'production' ? 'Previs' : t(item.key)}</span>
 		</button>
 	{/each}
 </nav>

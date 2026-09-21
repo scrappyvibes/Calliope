@@ -180,6 +180,7 @@ def build_harness() -> tuple[ToolRegistry, SystemPromptService]:
         canvas,
         interaction,
         memory,
+        production,
         render,
         script,
         shot_builder,
@@ -197,6 +198,7 @@ def build_harness() -> tuple[ToolRegistry, SystemPromptService]:
     memory.register(registry)
     skills.register(registry)
     shot_builder.register(registry)
+    production.register(registry)
     registry.on_pre_execute(_destructive_guard)
     registry.on_pre_execute(_render_approval_guard)
     register_builtin_sections(prompts)

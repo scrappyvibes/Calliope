@@ -24,6 +24,7 @@ from calliope.routers import (
     jobs,
     library,
     playground,
+    production,
     projects,
     scenes,
     settings as settings_router,
@@ -128,6 +129,7 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
     )
 
     app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
+    app.include_router(production.router, prefix="/api/projects", tags=["production"])
     app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
     app.include_router(story.router, prefix="/api/projects", tags=["story"])
     app.include_router(scenes.router, prefix="/api/projects", tags=["scenes"])

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -21,6 +21,7 @@ class LlmProfileIn(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
+    completion_provider: Literal["api", "claude", "codex"] | None = None
     llm_base_url: str | None = None
     llm_model: str | None = None
     llm_api_key: str | None = None
@@ -48,6 +49,8 @@ async def get_settings() -> dict[str, Any]:
 @router.post("")
 async def update_settings(payload: SettingsUpdate) -> dict[str, Any]:
     data = payload.model_dump(exclude_unset=True)
+    if "completion_provider" in data and data["completion_provider"] is None:
+        raise HTTPException(status_code=422, detail="completion_provider cannot be null")
     profiles_in = data.pop("llm_profiles", None)
     active_in = data.pop("llm_active_id", None)
     assignments_in = data.pop("agent_llm_assignments", None)

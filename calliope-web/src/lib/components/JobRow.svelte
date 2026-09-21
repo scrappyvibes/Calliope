@@ -47,9 +47,9 @@
 	async function cancel() {
 		busy = true;
 		try {
-			await jobsApi.cancel(job.id);
+			const result = await jobsApi.cancel(job.id);
 			await refresh();
-			toast.info(t('job.cancelled', { id: String(job.id) }));
+			toast.info(result.message ?? t('job.cancelled', { id: String(job.id) }));
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : t('job.cancelFailed'));
 		} finally {

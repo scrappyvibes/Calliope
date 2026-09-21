@@ -1,6 +1,7 @@
 """ComfyUI HTTP client: upload, prompt, poll, download."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from pathlib import Path
@@ -8,8 +9,13 @@ from typing import Any
 
 import httpx
 
+from calliope.comfyui.registry import (
+    AUDIO_CLASSES,
+    IMAGE_CLASSES,
+    VIDEO_CLASSES,
+    VIDEO_FILE_CLASSES,
+)
 from calliope.config import settings
-from calliope.comfyui.registry import IMAGE_CLASSES, AUDIO_CLASSES, VIDEO_CLASSES, VIDEO_FILE_CLASSES
 
 logger = logging.getLogger("calliope.comfyui")
 
@@ -52,6 +58,10 @@ def _surface_error(prefix: str, resp: httpx.Response) -> RuntimeError:
     return RuntimeError(f"{prefix} ({resp.status_code}){suffix}")
 
 
+class WorkflowRejectedError(RuntimeError):
+    """The server explicitly rejected a submission before execution."""
+
+
 class ComfyUIClient:
     def __init__(self, base_url: str | None = None) -> None:
         self.base_url = (base_url or settings.comfyui_base_url).rstrip("/")
@@ -70,13 +80,14 @@ class ComfyUIClient:
 
     async def upload_image(self, path: Path, subfolder: str = "calliope") -> str:
         data = path.read_bytes()
-        files = {"image": (path.name, data, "application/octet-stream")}
+        filename = hashlib.sha256(data).hexdigest() + path.suffix.lower()
+        files = {"image": (filename, data, "application/octet-stream")}
         form = {"overwrite": "true", "subfolder": subfolder}
         resp = await self._http.post(f"{self.base_url}/upload/image", files=files, data=form)
         if resp.status_code >= 400:
             raise _surface_error("ComfyUI image upload failed", resp)
         result = resp.json()
-        name = result.get("name", path.name)
+        name = result.get("name", filename)
         sub = result.get("subfolder") or subfolder
         return f"{sub}/{name}" if sub else name
 
@@ -88,7 +99,8 @@ class ComfyUIClient:
         existence check are most reliable without a subfolder prefix.
         """
         data = path.read_bytes()
-        files = {"image": (path.name, data, "application/octet-stream")}
+        filename = hashlib.sha256(data).hexdigest() + path.suffix.lower()
+        files = {"image": (filename, data, "application/octet-stream")}
         form = {"overwrite": "true", "type": "input"}
         if subfolder:
             form["subfolder"] = subfolder
@@ -96,20 +108,21 @@ class ComfyUIClient:
         if resp.status_code >= 400:
             raise _surface_error("ComfyUI audio upload failed", resp)
         result = resp.json()
-        name = result.get("name", path.name)
+        name = result.get("name", filename)
         sub = result.get("subfolder") or subfolder
         return f"{sub}/{name}" if sub else name
 
     async def upload_video(self, path: Path, subfolder: str = "calliope") -> str:
         """Same Comfy ``/upload/image`` endpoint the official client uses for video."""
         data = path.read_bytes()
-        files = {"image": (path.name, data, "application/octet-stream")}
+        filename = hashlib.sha256(data).hexdigest() + path.suffix.lower()
+        files = {"image": (filename, data, "application/octet-stream")}
         form = {"overwrite": "true", "subfolder": subfolder, "type": "input"}
         resp = await self._http.post(f"{self.base_url}/upload/image", files=files, data=form)
         if resp.status_code >= 400:
             raise _surface_error("ComfyUI video upload failed", resp)
         result = resp.json()
-        name = result.get("name", path.name)
+        name = result.get("name", filename)
         sub = result.get("subfolder") or subfolder
         return f"{sub}/{name}" if sub else name
 
@@ -159,9 +172,19 @@ class ComfyUIClient:
         p = Path(value)
         return p.is_absolute() or "/" in value or "\\" in value
 
-    async def queue_prompt(self, workflow: dict[str, Any]) -> str:
+    async def queue_prompt(
+        self, workflow: dict[str, Any], *, prompt_id: str | None = None,
+        attempt_id: str | None = None,
+    ) -> str:
         payload = {"prompt": workflow, "client_id": self.client_id}
+        if prompt_id:
+            payload["prompt_id"] = prompt_id
+        if attempt_id:
+            payload["extra_data"] = {"calliope_attempt_id": attempt_id,
+                                     "client_id": self.client_id}
         resp = await self._http.post(f"{self.base_url}/prompt", json=payload)
+        if 400 <= resp.status_code < 500:
+            raise WorkflowRejectedError(str(_surface_error("ComfyUI rejected the workflow", resp)))
         if resp.status_code >= 400:
             raise _surface_error("ComfyUI rejected the workflow", resp)
         data = resp.json()
@@ -175,6 +198,20 @@ class ComfyUIClient:
         resp.raise_for_status()
         data = resp.json()
         return data.get(prompt_id)
+
+    async def get_queue(self) -> dict[str, Any]:
+        resp = await self._http.get(f"{self.base_url}/queue")
+        resp.raise_for_status()
+        return resp.json()
+
+    async def recent_history(self) -> dict[str, Any]:
+        resp = await self._http.get(f"{self.base_url}/history", params={"max_items": 200})
+        resp.raise_for_status()
+        return resp.json()
+
+    async def delete_pending_prompt(self, prompt_id: str) -> None:
+        resp = await self._http.post(f"{self.base_url}/queue", json={"delete": [prompt_id]})
+        resp.raise_for_status()
 
     async def download_image(
         self,

@@ -11,6 +11,15 @@ from calliope.db import migrate_db
 from calliope.main import create_app
 
 
+@pytest.fixture(autouse=True)
+def isolated_completion_provider(monkeypatch):
+    # A developer may have subscription mode saved locally. Unit tests must
+    # never spend that quota; transport tests opt in with mocked subprocesses.
+    from calliope.config import settings
+
+    monkeypatch.setattr(settings, "completion_provider", "api")
+
+
 @pytest.fixture
 def client(monkeypatch):
     with tempfile.TemporaryDirectory() as tmpdir:

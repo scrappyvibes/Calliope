@@ -204,6 +204,13 @@ class WorkflowAnalyze(BaseModel):
     workflow_json: dict[str, Any]
 
 
+class WorkflowAdapt(WorkflowAnalyze):
+    adapter: Literal["scrappyvibes_style_external_prompts", "scrappyvibes_h3_references", "scrappyvibes_rough_board", "scrappyvibes_refined_board"]
+    image_count: int = Field(default=1, ge=0, le=9)
+    video_count: int = Field(default=0, ge=0, le=3)
+    audio_count: int = Field(default=0, ge=0, le=3)
+
+
 class JobCreate(BaseModel):
     scene_id: int | None = None
     clip_id: int | None = None

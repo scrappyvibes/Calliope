@@ -276,7 +276,7 @@ def _stub_comfy(monkeypatch, captured: dict) -> list[str]:
         uploads.append(str(path))
         return f"{subfolder}/{Path(path).name}"
 
-    async def fake_queue_prompt(self, workflow):
+    async def fake_queue_prompt(self, workflow, **kwargs):
         captured.update(workflow)
         return "test-prompt-id"
 

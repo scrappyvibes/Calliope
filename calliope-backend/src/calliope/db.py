@@ -140,6 +140,20 @@ CREATE TABLE IF NOT EXISTS jobs (
     retry_count INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS render_attempts (
+    id TEXT PRIMARY KEY,
+    job_id INTEGER NOT NULL,
+    server_url TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    prompt_id TEXT NOT NULL,
+    state TEXT NOT NULL,
+    graph_json TEXT NOT NULL,
+    graph_sha256 TEXT NOT NULL,
+    history_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS render_attempts_job ON render_attempts(job_id);
+
 CREATE TABLE IF NOT EXISTS agent_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,

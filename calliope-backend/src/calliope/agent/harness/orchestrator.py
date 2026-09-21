@@ -177,6 +177,17 @@ ROLE_TOOLS: dict[str, list[str]] = {
     ],
 }
 
+# Shared-world production is its own role; it must not fall back to the old
+# generic video enqueuer, which omits board/camera lineage and take selection.
+ROLE_TOOLS["production"] = [
+    "get_workspace", "get_story", "list_scenes", "list_clips", "list_workflows",
+    "get_production_workflow", "get_production_job", "get_production", "inspect_production_image",
+    "generate_storyboard", "save_storyboard_candidate", "select_storyboard_take",
+    "set_production_world", "set_production_camera", "render_production_previs",
+    "generate_production_video", "select_production_video", "comfy_server_info",
+    "list_jobs", "get_job_status", "wait_for_jobs", "ask_user",
+]
+
 PLANNER_SYSTEM = """You are the planner of an AI production swarm. Given the user's goal and the current project state, decide:
 
 1. Whether this is a SIMPLE request (one question, one small edit, or a chat reply) — reply {"mode": "single"}.
@@ -186,12 +197,14 @@ Respond with ONLY a JSON object:
 {
   "mode": "single" | "swarm",
   "tasks": [
-    {"role": "story|script|assets|video", "goal": "what this sub-agent must accomplish"}
+    {"role": "story|script|assets|video|production", "goal": "what this sub-agent must accomplish"}
   ],
   "note": "one line for the user about the plan"
 }
 
 Rules:
+- Scene and clip creation belong to script, never assets. Script tasks must save records with add_scene/add_clip, not merely describe shots.
+- Rough/refined/styled storyboards, shared Blender geometry/cameras, previs, and workflow A/B shot generation belong to production. It has get_production_workflow to discover input node IDs, inspect_production_image to see boards, and the dedicated generation/selection tools. Schedule it after saved scenes/clips exist. Preserve the user's requested stage boundaries; do not queue later renders unless requested.
 - The standard EDIT pipeline (story → script → add/update assets text) is swarm work: one task per role, in that order.
 - Image/video GENERATION is human-in-the-loop, but the user's EXPLICIT choices grant permission: tagging a workflow (@mention), asking to "generate/render/create an image", or confirming an offer all count. When the user tagged a workflow AND named entities (characters/locations/scenes), schedule a single assets task whose goal says: run_workflow with the tagged workflow_id + per-entity prompts (character_ids=[…] for multiple characters), wait_for_jobs, then post_artifact_to_canvas for each output.
 - For text-only edits (add/update characters, locations, items, scenes, story, script) with NO generation ask, schedule the edit task and DO NOT schedule render tasks.
@@ -588,6 +601,14 @@ async def _run_sub_agent(
         "do the edit and stop."
     )
     hardening = hardening_text()
+    if role == "production":
+        system += (
+            " For shared-world production, use the dedicated generate_storyboard, "
+            "render_production_previs and generate_production_video tools so source lineage "
+            "is recorded. Read get_production_workflow for exact bindings and get_production_job "
+            "for compact job lineage/output indices. Save and inspect "
+            "image candidates before selecting them; do not invent visual observations."
+        )
     if hardening:
         system += "\n\n" + hardening
     # Same safety nets as run_turn — the swarm must not be a second-class

@@ -8,6 +8,7 @@
 	import StoryStage from '$lib/components/StoryStage.svelte';
 	import AssetsStage from '$lib/components/AssetsStage.svelte';
 	import ScriptStage from '$lib/components/ScriptStage.svelte';
+	import ProductionStage from '$lib/components/ProductionStage.svelte';
 	import QueueStage from '$lib/components/QueueStage.svelte';
 	import ActivityPanel from '$lib/components/ActivityPanel.svelte';
 	import AppHeader from '$lib/components/AppHeader.svelte';
@@ -32,7 +33,7 @@
 
 	// Stage <-> URL contract: the active stage lives in ?stage=story|assets|script|video.
 	// Switching stages = goto('?stage=<id>'); deep links and browser Back/Forward work.
-	const STAGES = ['story', 'assets', 'script', 'video'] as const;
+	const STAGES = ['story', 'assets', 'script', 'production', 'video'] as const;
 	type Stage = (typeof STAGES)[number];
 
 	function stageFromUrl(url: URL): Stage {
@@ -44,7 +45,8 @@
 		story: '1 · Story',
 		assets: '2 · Assets',
 		script: '3 · Script',
-		video: '4 · Video',
+		production: '4 · Previs',
+		video: '5 · Video',
 	};
 
 	let activeTab = $state<Stage>(stageFromUrl(page.url));
@@ -210,6 +212,8 @@
 					<AssetsStage {projectId} />
 				{:else if activeTab === 'script'}
 					<ScriptStage {projectId} />
+				{:else if activeTab === 'production'}
+					<ProductionStage {projectId} />
 				{:else if activeTab === 'video'}
 					<QueueStage {projectId} {projectTitle} />
 				{/if}
