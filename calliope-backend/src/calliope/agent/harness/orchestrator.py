@@ -371,6 +371,7 @@ async def orchestrate(
     )
     results: list[str] = []
     paused = False
+    failed = False
     # Swarm-level steering watermark: corrections that land between tasks are
     # folded into the next task's goal context (sub-agents see the user's
     # course correction, not just the planner's original goal).
@@ -387,7 +388,7 @@ async def orchestrate(
             steer_watermark = session_log.steering_max_seq(session_id)
             if steer_lines:
                 goal_i = goal_i + "\nMid-run user steering: " + " / ".join(steer_lines)
-        if paused:
+        if paused or failed:
             # A previous sub-agent asked the user a question — later tasks may
             # depend on the answer, so running them would waste work (and
             # render permission). Skip cleanly; the user's reply re-routes.
@@ -403,7 +404,7 @@ async def orchestrate(
                 session_id,
                 session_log.ASSISTANT_MESSAGE,
                 {
-                    "content": f"Skipped (waiting for the user's answer): {goal_i}",
+                    "content": f"Skipped ({'waiting for the user' if paused else 'earlier task failed'}): {goal_i}",
                     "agent_name": f"{role}-agent",
                 },
             )
@@ -411,7 +412,7 @@ async def orchestrate(
                 {
                     "role": "assistant",
                     "agent_name": f"{role}-agent",
-                    "content": f"Skipped (waiting for the user's answer): {goal_i}",
+                    "content": f"Skipped ({'waiting for the user' if paused else 'earlier task failed'}): {goal_i}",
                 }
             )
             continue
@@ -475,6 +476,7 @@ async def orchestrate(
                 # instead of running tasks whose inputs are unknown.
                 paused = True
         except Exception as exc:  # noqa: BLE001
+            failed = True
             # Some exceptions stringify EMPTY (httpx.ReadTimeout/ReadError,
             # TimeoutError) — always name the type, and keep the traceback
             # (observed live 2026-08-25: "Sub-agent failed: " with nothing
@@ -519,6 +521,17 @@ async def orchestrate(
         session_log.append_event(
             session_id,
             session_log.ASSISTANT_MESSAGE,
+            {"content": final, "agent_name": None},
+        )
+        await emit({"role": "assistant", "content": final})
+        return final
+
+    if failed:
+        # A second model cannot safely infer which mutations preceded an
+        # interrupted completion. Preserve the recorded reports verbatim.
+        final = "Work interrupted. Recorded task reports:\n\n" + "\n\n".join(results)
+        session_log.append_event(
+            session_id, session_log.ASSISTANT_MESSAGE,
             {"content": final, "agent_name": None},
         )
         await emit({"role": "assistant", "content": final})
@@ -620,6 +633,7 @@ async def _run_sub_agent(
     # boundaries only (after the previous step's tool results).
     steer_watermark = session_log.steering_max_seq(ctx.session_id)
     final = ""
+    recorded_results: list[dict[str, Any]] = []
     try:
         for iteration in range(1, max_iterations + 1):
             for s in session_log.drain_steering(ctx.session_id, steer_watermark):
@@ -702,6 +716,13 @@ async def _run_sub_agent(
                     session_log.TOOL_RESULT,
                     {"call_id": call_id, "tool_name": name, "result": result, "agent_name": agent_name},
                 )
+                outcome: dict[str, Any] = {"tool": name}
+                if isinstance(result, dict):
+                    outcome.update({k: result[k] for k in ("ok", "job_id") if k in result})
+                    production = result.get("production")
+                    if isinstance(production, dict):
+                        outcome["production_revision"] = production.get("revision")
+                recorded_results.append(outcome)
                 await event_bus.publish(
                     "agent.tool",
                     {
@@ -744,6 +765,16 @@ async def _run_sub_agent(
                 "Reached step budget. Here is where things stand — the goal "
                 "may be partially complete."
             )
+    except Exception as exc:
+        if recorded_results:
+            detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            raise RuntimeError(
+                detail + "\nRecorded tool results before interruption: "
+                + json.dumps(recorded_results, ensure_ascii=False)
+                + "\nEarlier changes were not rolled back. Read current project state "
+                "and jobs before resuming; do not repeat successful mutations blindly."
+            ) from exc
+        raise
     finally:
         await client.close()
     return final or "Done."
